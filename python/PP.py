@@ -480,7 +480,7 @@ class App(tk.Tk):
             messagebox.showerror("Ошибка загрузки изображения", f"Не удалось загрузить изображение: {e}")
 
 
-# vvnvevoe
+# Создание Git
 if __name__ == "__main__":
     app = App()
     app.mainloop()
