@@ -38,10 +38,17 @@ def get_tables(conn):
 
 
 # Получение данных из таблицы
+# Получение данных из таблицы с сортировкой только для "Расписание"
 def get_table_data(conn, table_name):
     try:
         with conn.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM {table_name}")
+            if table_name == "Расписание":
+                # Сортировка только для таблицы "Расписание"
+                cursor.execute(f"SELECT * FROM {table_name} ORDER BY Номер_расписания ASC")
+            else:
+                # Без сортировки для других таблиц
+                cursor.execute(f"SELECT * FROM {table_name}")
+
             rows = cursor.fetchall()
             column_names = [desc[0] for desc in cursor.description]
         return column_names, rows
@@ -101,35 +108,28 @@ def search_by_group(conn, group_name):
 def check_conflicts(conn, day, pair, group=None, teacher=None, room=None, current_id=None):
     try:
         with conn.cursor() as cursor:
-            query = """
-                SELECT COUNT(*) 
-                FROM Расписание r
-                WHERE r.День = %s AND r.Пара = %s
-            """
+            where_conditions = ["r.День = %s", "r.Пара = %s"]
             params = [day, pair]
 
             if group:
-                query += " AND r.Группа = %s"
+                where_conditions.append("r.Группа = %s")
                 params.append(group)
             if teacher:
-                query += " AND r.Номер_преподавателя = %s"
+                where_conditions.append("r.Номер_преподавателя = %s")
                 params.append(teacher)
             if room:
-                query += " AND r.Номер_кабинета = %s"
+                where_conditions.append("r.Номер_кабинета = %s")
                 params.append(room)
-
             if current_id:
-                query += " AND r.Номер_расписания != %s"
+                where_conditions.append("r.Номер_расписания != %s")
                 params.append(current_id)
 
+            query = f"SELECT COUNT(*) FROM Расписание r WHERE {' AND '.join(where_conditions)}"
             cursor.execute(query, tuple(params))
-            count = cursor.fetchone()[0]
-        return count > 0
+            return cursor.fetchone()[0] > 0
     except Exception as e:
-        messagebox.showerror("Ошибка проверки конфликтов",
-                             "Не удалось проверить конфликты. Пожалуйста, попробуйте позже.")
+        messagebox.showerror("Ошибка проверки конфликтов", f"Ошибка: {str(e)}")
         return False
-
 
 # Диалоговое окно для редактирования записи
 class EditRecordDialog(tk.Toplevel):
@@ -372,8 +372,9 @@ class App(tk.Tk):
             with self.conn.cursor() as cursor:
                 cursor.execute(delete_query, (primary_key,))
                 self.conn.commit()
+            messagebox.showinfo("Успех", "Запись успешно удалена.")
         except Exception as e:
-            messagebox.showerror("Ошибка удаления записи", "Не удалось удалить запись. Пожалуйста, попробуйте позже.")
+            messagebox.showerror("Ошибка удаления записи", f"Не удалось удалить запись: {e}")
             return
 
         self.refresh_table()
@@ -422,8 +423,9 @@ class App(tk.Tk):
             self.refresh_table()
 
     def refresh_table(self):
-        if self.current_tree:
-            self.current_tree.delete(*self.current_tree.get_children())
+        if self.current_tree and self.current_table_name:
+            for item in self.current_tree.get_children():
+                self.current_tree.delete(item)
             columns, rows = get_table_data(self.conn, self.current_table_name)
             for row in rows:
                 self.current_tree.insert("", tk.END, values=row)
@@ -479,11 +481,6 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Ошибка загрузки изображения", f"Не удалось загрузить изображение: {e}")
 
-
-# Создание Git
-
-
-# def функция
 
 if __name__ == "__main__":
     app = App()
