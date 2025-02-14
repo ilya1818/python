@@ -482,7 +482,8 @@ class App(tk.Tk):
 
 # Создание Git
 
-# def
+
+# def функция
 
 if __name__ == "__main__":
     app = App()
