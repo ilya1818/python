@@ -466,7 +466,7 @@ class App(tk.Tk):
 
     def add_image(self):
         # Загружаем изображение с помощью PIL
-        image_path = "C:/Users/Илья/PycharmProjects/pythonProject1/1.png"  # Здесь замените на ваш путь к изображению
+        image_path = "/1.png"  # Здесь замените на ваш путь к изображению
         try:
             img = Image.open(image_path)
             img = img.resize((100, 100))  # Изменяем размер изображения по необходимости
