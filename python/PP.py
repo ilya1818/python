@@ -104,32 +104,70 @@ def search_by_group(conn, group_name):
         return [], []
 
 
-# Проверка на конфликты при добавлении/редактировании расписания
-def check_conflicts(conn, day, pair, group=None, teacher=None, room=None, current_id=None):
+def is_valid_discipline(conn, discipline):
     try:
         with conn.cursor() as cursor:
-            where_conditions = ["r.День = %s", "r.Пара = %s"]
-            params = [day, pair]
-
-            if group:
-                where_conditions.append("r.Группа = %s")
-                params.append(group)
-            if teacher:
-                where_conditions.append("r.Номер_преподавателя = %s")
-                params.append(teacher)
-            if room:
-                where_conditions.append("r.Номер_кабинета = %s")
-                params.append(room)
-            if current_id:
-                where_conditions.append("r.Номер_расписания != %s")
-                params.append(current_id)
-
-            query = f"SELECT COUNT(*) FROM Расписание r WHERE {' AND '.join(where_conditions)}"
-            cursor.execute(query, tuple(params))
+            cursor.execute("SELECT COUNT(*) FROM Дисциплины WHERE Номер_дисциплины = %s", (discipline,))
             return cursor.fetchone()[0] > 0
     except Exception as e:
-        messagebox.showerror("Ошибка проверки конфликтов", f"Ошибка: {str(e)}")
+        messagebox.showerror("Ошибка проверки дисциплины", f"Ошибка SQL: {str(e)}")
         return False
+
+
+def check_conflicts(conn, day, pair, group=None, teacher=None, room=None, subject=None, current_id=None):
+    try:
+        with conn.cursor() as cursor:
+            # Конфликт кабинета
+            if room:
+                sql = "SELECT COUNT(*) FROM Расписание WHERE День = %s AND Пара = %s AND Номер_кабинета = %s"
+                params = [day, pair, room]
+                if current_id:
+                    sql += " AND Номер_расписания != %s"
+                    params.append(current_id)
+                cursor.execute(sql, params)
+                if cursor.fetchone()[0] > 0:
+                    return "Конфликт: кабинет уже занят в это время другой группой."
+
+            # Конфликт времени для одной группы
+            if group:
+                sql = "SELECT COUNT(*) FROM Расписание WHERE День = %s AND Пара = %s AND Группа = %s"
+                params = [day, pair, group]
+                if current_id:
+                    sql += " AND Номер_расписания != %s"
+                    params.append(current_id)
+                cursor.execute(sql, params)
+                if cursor.fetchone()[0] > 0:
+                    return "Конфликт: для данной группы уже назначена пара в это время."
+
+            # Конфликт предмета для разных групп в одну пару
+            if subject:
+                sql = "SELECT COUNT(*) FROM Расписание WHERE День = %s AND Пара = %s AND Номер_дисциплины = %s"
+                params = [day, pair, subject]
+                if current_id:
+                    sql += " AND Номер_расписания != %s"
+                    params.append(current_id)
+                cursor.execute(sql, params)
+                count = cursor.fetchone()[0]
+                if count > 0:
+                    return "Конфликт: данная дисциплина уже назначена другой группе в эту пару."
+
+            # Конфликт преподавателя
+            if teacher:
+                sql = "SELECT COUNT(*) FROM Расписание WHERE День = %s AND Пара = %s AND Номер_преподавателя = %s"
+                params = [day, pair, teacher]
+                if current_id:
+                    sql += " AND Номер_расписания != %s"
+                    params.append(current_id)
+                cursor.execute(sql, params)
+                count = cursor.fetchone()[0]
+                if count > 0:
+                    return "Конфликт: преподаватель уже занят в это время другой группой."
+
+            return None  # Нет конфликтов
+
+    except Exception as e:
+        messagebox.showerror("Ошибка проверки конфликтов", f"Ошибка SQL: {str(e)}")
+        return "Ошибка при проверке конфликтов"
 
 # Диалоговое окно для редактирования записи
 class EditRecordDialog(tk.Toplevel):
@@ -310,6 +348,7 @@ class App(tk.Tk):
             self.selected_values = None
 
     def edit_record(self):
+
         if not hasattr(self, 'selected_item') or not self.selected_item:
             messagebox.showwarning("Предупреждение", "Выберите запись для редактирования.")
             return
@@ -327,6 +366,7 @@ class App(tk.Tk):
 
             primary_key = self.selected_values[0]
 
+            # Получаем индексы нужных столбцов
             day_index = self.current_tree['columns'].index('День') if 'День' in self.current_tree['columns'] else None
             pair_index = self.current_tree['columns'].index('Пара') if 'Пара' in self.current_tree['columns'] else None
             group_index = self.current_tree['columns'].index('Группа') if 'Группа' in self.current_tree[
@@ -336,18 +376,22 @@ class App(tk.Tk):
                                                                                              'columns'] else None
             room_index = self.current_tree['columns'].index('Номер_кабинета') if 'Номер_кабинета' in self.current_tree[
                 'columns'] else None
+            subject_index = self.current_tree['columns'].index('Дисциплина') if 'Дисциплина' in self.current_tree[
+                'columns'] else None
 
             day = dialog.result[day_index] if day_index is not None else None
             pair = dialog.result[pair_index] if pair_index is not None else None
             group = dialog.result[group_index] if group_index is not None else None
             teacher = dialog.result[teacher_index] if teacher_index is not None else None
             room = dialog.result[room_index] if room_index is not None else None
+            subject = dialog.result[subject_index] if subject_index is not None else None
 
-            if day and pair and (group or teacher or room):
-                if check_conflicts(self.conn, day, pair, group, teacher, room, primary_key):
-                    messagebox.showerror("Ошибка редактирования записи",
-                                         "Произошел конфликт расписания. Пожалуйста, измените параметры.")
-                    return
+            # Проверка конфликтов по кабинету и дисциплине
+            conflict_message = check_conflicts(self.conn, day, pair, group, teacher, room, subject, primary_key)
+            if conflict_message:
+                messagebox.showerror("Ошибка редактирования записи", conflict_message)
+                return
+
 
             try:
                 with self.conn.cursor() as cursor:
@@ -355,7 +399,7 @@ class App(tk.Tk):
                     self.conn.commit()
             except Exception as e:
                 messagebox.showerror("Ошибка редактирования записи",
-                                     "Не удалось обновить запись. Пожалуйста, проверьте введенные данные и попробуйте снова.")
+                                     "Не удалось обновить запись. Проверьте введенные данные и попробуйте снова.")
                 return
 
             self.refresh_table()
